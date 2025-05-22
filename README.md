@@ -161,6 +161,7 @@ const NewSectionClosedEvent = (sectionId) => {
   section.dispatchEvent(new CustomEvent("closed", { detail: { sectionId } }));
 };
 ```
+! P.S. Эти события автоматически вызывает функция toggleSection, либо command в step = toggleSection
 
 ### Пример: блокировка скролла при открытии модального окна
 ```js
