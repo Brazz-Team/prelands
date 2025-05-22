@@ -24,6 +24,7 @@
 - Каждый модуль работает только со своей секцией/блоком DOM (например, секция с id `faq` для модуля FAQ).
 - Стили модуля пишутся с привязкой к id секции, чтобы избежать конфликтов.
 - JS-модули используют IIFE (Immediately Invoked Function Expression) для изоляции переменных.
+- Если нужно взаимодействие с localStorage, его тоже изолировать в том же файле js
 
 #### Пример: FAQ
 ```js
@@ -100,21 +101,59 @@ land_tools.NextStep(); // Перейти к следующему шагу flow
 ```
 
 ### land_store.js
-Содержит хранилища (store) для flow, игры, продукта, devtools. Все данные сохраняются в localStorage с уникальным ключом для каждого лендинга.
-
-- **flowStore** — хранит текущий flow и step, методы:
-  - `GetCurrentFlow()`, `GetCurrentStep()`, `UpdateCurrentFlow(flow)`, `UpdateCurrentStep(step)`
+Содержит api хранилища (store). Все данные сохраняются в localStorage с уникальным ключом для каждого лендинга.
 
 Примеры
-- **gameStore** — хранит состояние мини-игры (например, открытые коробки).
-- **productStore** — хранит выбранные параметры товара (цвет, размер и т.д.).
-- **devtoolsStore** — настройки для отладки (видимость devtools, ускорение анимаций).
-- **ResetAll(landing_id)** — сбросить все данные лендинга в localStorage.
+- **gameCartonStore** - можно посмотреть в Base лендинге
 
-#### Пример:
+### Как инициализировать и пользоваться своим store для модуля
 ```js
-const currentFlow = land_store.flowStore.GetCurrentFlow();
-const currentStep = land_store.flowStore.GetCurrentStep();
+// Инициализация api для работы с local storage
+((w) => {
+  const { InitStore } = w.__landing_store;
+
+  InitStore("gameCarton", (UpdateStore, GetStore) => {
+    const sOpenedBoxes = GetStore("openedBoxes");
+    const sWinningBoxIndex = GetStore("winningBoxIndex");
+
+    let openedBoxes = sOpenedBoxes ?? [];
+    let winningBoxIndex = sWinningBoxIndex ?? null;
+
+    const GetOpenedBoxes = () => openedBoxes;
+    const UpdateOpenedBoxes = (boxes) => {
+      UpdateStore("openedBoxes", boxes);
+      openedBoxes = boxes;
+    };
+
+    const GetWinningBoxIndex = () => winningBoxIndex;
+    const UpdateWinningBoxIndex = (boxIndex) => {
+      UpdateStore("winningBoxIndex", boxIndex);
+      winningBoxIndex = boxIndex;
+    };
+
+    return {
+      GetOpenedBoxes,
+      UpdateOpenedBoxes,
+      GetWinningBoxIndex,
+      UpdateWinningBoxIndex,
+    };
+  });
+})(window);
+```
+потом в логике js можно обращаться к данным функциям
+```js
+((w) => {
+  const land_store = w.__landing_store;
+
+  // Обновляем список открытых коробок в store
+  land_store.gameCartonStore.UpdateOpenedBoxes([
+    ...land_store.gameCartonStore.GetOpenedBoxes(),
+    index,
+  ]);
+
+  // Получаем список открытых коробок
+  land_store.gameCartonStore.GetOpenedBoxes()
+})(window);
 ```
 
 ### land_devtools.js
@@ -174,16 +213,6 @@ modal.addEventListener('closed', () => {
 });
 ```
 
-### Пример: взаимодействие между модулями
-```js
-// mainSection.js
-mainSection.addEventListener('opened', () => {
-  // логика секции main после открытия
-});
-```
-
----
-
 ## Вложенность и композиция модулей
 
 - Каждый лендинг содержит как минимум один основной flow (обычно `main`).
@@ -193,11 +222,24 @@ mainSection.addEventListener('opened', () => {
 #### Пример вложенности:
 ```html
 <section id="main">
-  ...
-  <div id="comments">...</div>
-  <div id="faq">...</div>
+  <div class="__section-content">
+    ...
+    <section id="comments">
+      <div class="__section-content">
+      ...
+      </div>
+    </div>
+
+    <section id="faq">
+      <div class="__section-content">
+      ...
+      </div>
+    </div>
+  </div>
 </section>
 ```
+
+ВАЖНО! Если это модуль, и он открывается с помощью ToggleSection, это должно быть обязательно sectiond#(id модуля)>div.__section-content, и внутри уже можно делать любую структуру
 
 ---
 
@@ -253,6 +295,7 @@ mainSection.addEventListener('opened', () => {
 - Для сложных секций (игра, корзина) — отдельные модули с собственным store.
 - Для отладки можно использовать devtools (is_debug: true).
 - Каждый новый модуль по-хорошему должен иметь уникальное кодовое имя, например cartAlcatras, commentsHyber (например если будет несколько модулей комментариев)
+- Любая текстовка, должна быть в index.html, в скрытом поле если надобно, но не в js
 
 ---
 
@@ -269,6 +312,7 @@ assets/
   m_gameCarton.css
   m_cartAlcatras.js
   m_cartAlcatras.css
+  index.js - тут логика по сути main модуля
   land_tools.js
   land_store.js
   land_devtools.js
@@ -278,13 +322,70 @@ assets/
 ---
 
 ## Синхронизация между модулями
-Бывает ситуация, например как с корзиной, куда попадают какие-то данные из main, например, назвние товара, старая цена, новая цена
-и если есть выбор варианта товара, нужно реализовывать так же, как это реализовано в секции main
+Иногда, например, в лендинге модули могут нуждаться в данных о товаре, они же необходимы для передачи рекламодателю, для этого реализован commonStore в window.__landing_store
 
-Пример смотреть в m_cartAlcatras.js, там есть querySelector-ы, которые сейчас гвоздями забиты, вообще хотелось бы конечно избавиться от этого, буду думать
+### Пример в index.js, перед тем как вызвать NextStep()
+```js
+// Тут мы вытаскиваем из дерева название товара и тд, переменные productOldPrice, productNewPrice, selectedSizeItem и тд
+...
 
-P.S. Просто не придумал пока как это можно отшить друг от друга
-Пока только идея была сделать какой-то общий store, куда могут обращаться все модули и брать оттуда данные по ключам, которые должны быть заранее обговорены (старая цена, новая цена, основная картинка товара и тд), и уже этот store каждый модуль может сам дополнить или изменять, так можно полностью изолировать некоторые модули от конкретной реализации main
+// Берем изображение товара из выбранного варианта товара
+const selectedImageSrc = selectedColorItem
+  .querySelector("img")
+  .getAttribute("src");
+
+const customProductName = productName.trim() + " (" + selectedColorItem.getAttribute("item-display").trim() + ")";
+
+commonStore.SetProductName(customProductName);
+commonStore.SetProductImage(selectedImageSrc);
+commonStore.SetProductOldPrice(productOldPrice);
+commonStore.SetProductNewPrice(productNewPrice);
+// Тут массив, чтобы можно было передать несколько вариантов, например может быть цвет и размер, или еще больше
+commonStore.SetProductProperties([{title: "Size", value: selectedSizeItem.innerText}]);
+
+// И переходим к следующему шагу
+land_tools.NextStep();
+```
+
+### Потом к примеру в cartAlcatras.js
+```js
+const land_store = window.__landing_store;
+const commonStore = land_store.commonStore;
+
+// Устаналиваем название товара в скрытое поле
+const productNameInput = land_tools.GetInputByName("product_name_landings");
+productNameInput.value = commonStore.GetProductName();
+
+// Устанавливаем изображение товара в скрытое поле
+const productImageInput = land_tools.GetInputByName(
+  "product_image_landings"
+);
+productImageInput.value = commonStore.GetProductImage();
+
+// Устанавливаем название товара
+const cartAlcatrasOfferName = document.querySelector(
+  "#cartAlcatrasOfferName"
+);
+cartAlcatrasOfferName.innerHTML = commonStore.GetProductName();
+
+// Устанавливаем изображение товара
+const cartAlcatrasCurrentPhoto = document.querySelector(
+  "#cartAlcatrasCurrentPhoto"
+);
+cartAlcatrasCurrentPhoto.src = commonStore.GetProductImage();
+
+// Устанавливаем свойства товара
+const cartAlcatrasOfferProperties = document.querySelector(
+  "#cartAlcatrasOfferProperties"
+);
+// Как раз проходимся по массиву с пропсами товара, и отображаем их
+commonStore.GetProductProperties().forEach((property) => {
+  cartAlcatrasOfferProperties.innerHTML += `<div class="offer-property">${property.title}: ${property.value}</div>`;
+});
+
+```
+
+Таким образом корзина не знает откуда взялись эти необходимые данные в каждом лендинге, но они там есть, таким образом нам всего лишь в main модуле положить эти данные в commonStore
 
 ---
 
